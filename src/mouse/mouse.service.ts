@@ -7,6 +7,10 @@ export interface UserPointer{
     current_page: string;
     x: number;
     y: number;
+    scrollX?: number;
+    scrollY?: number;
+    pageX?: number;
+    pageY?: number;
 }
 
 @Injectable()
@@ -26,17 +30,37 @@ export class MouseService {
             current_page,
             x: 0,
             y: 0,
+            scrollX: 0,
+            scrollY: 0,
+            pageX: 0,
+            pageY: 0
         };
         this.users.set(id, user);
         return user;
     }
 
-    updateUserPosition(id: string, x: number, y: number, current_page: string): UserPointer | null {
+    updateUserPosition(id: string, x: number, y: number, scrollX: number, scrollY: number, pageX: number, pageY: number, current_page: string): UserPointer | null {
         const user = this.users.get(id);
         if (user) {
             user.x = x;
             user.y = y;
+            user.scrollX = scrollX;
+            user.scrollY = scrollY;
+            user.pageX = pageX;
+            user.pageY = pageY;
             user.current_page = current_page;
+            return user;
+        }
+        return null;
+    }
+
+    updateUserScroll(id: string, scrollX: number, scrollY: number): UserPointer | null {
+        const user = this.users.get(id);
+        if (user) {
+            user.scrollX = scrollX;
+            user.scrollY = scrollY;
+            user.pageX = scrollX+user.x;
+            user.pageY = scrollY+user.y;
             return user;
         }
         return null;

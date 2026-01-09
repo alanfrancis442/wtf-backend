@@ -30,10 +30,46 @@ export class MouseGateway implements OnGatewayConnection, OnGatewayDisconnect {
   }
 
   @SubscribeMessage('move_pointer')
-  handelPointerMove(@ConnectedSocket() client: Socket,@MessageBody() data: {x: number, y: number,current_page: string}) {
-    const updatedUser = this.mouseService.updateUserPosition(client.id, data.x, data.y, data.current_page);
+  handelPointerMove(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() data: {
+      x: number;
+      y: number;
+      scrollX: number;
+      scrollY: number;
+      pageX: number;
+      pageY: number;
+      current_page: string;
+    }
+  ) {
+    const updatedUser = this.mouseService.updateUserPosition(
+      client.id,
+      data.x,
+      data.y,
+      data.scrollX,
+      data.scrollY,
+      data.pageX,
+      data.pageY,
+      data.current_page
+    );
+    if (updatedUser) {
+      client.broadcast.emit('pointer_moved', updatedUser);
+    }
+  } 
+
+  @SubscribeMessage('scroll_update')
+  handleScrollUpdate(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() data: { scrollX: number; scrollY: number }
+  ) {
+    const updatedUser = this.mouseService.updateUserScroll(
+      client.id,
+      data.scrollX,
+      data.scrollY
+    );
     if (updatedUser) {
       client.broadcast.emit('pointer_moved', updatedUser);
     }
   }
+
 }
