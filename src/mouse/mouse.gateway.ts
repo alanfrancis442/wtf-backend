@@ -19,7 +19,7 @@ export class MouseGateway implements OnGatewayConnection, OnGatewayDisconnect {
   @WebSocketServer()
   server: Server;
 
-  private puzzleSeed?: number;
+  private puzzleState: any = null;
 
   constructor(private readonly mouseService: MouseService) {}
 
@@ -82,29 +82,37 @@ export class MouseGateway implements OnGatewayConnection, OnGatewayDisconnect {
     }
   }
 
-  // Puzzle seed management - ensure all users get the same seed
-  @SubscribeMessage('puzzle_request_seed')
-  handlePuzzleSeedRequest(@ConnectedSocket() client: Socket) {
-    // Initialize seed once, then reuse it for all users
-    if (!this.puzzleSeed) {
-      this.puzzleSeed = Date.now();
-      console.log('Puzzle seed initialized:', this.puzzleSeed);
+  // --- Puzzle State Management ---
+
+  @SubscribeMessage('puzzle_request_state')
+  handlePuzzleRequestState(@ConnectedSocket() client: Socket) {
+    if (this.puzzleState) {
+      client.emit('puzzle_state_sync', this.puzzleState);
+    } else {
+      client.emit('puzzle_no_state');
     }
-    
-    // Send the same seed to all clients
-    client.emit('puzzle_seed', { seed: this.puzzleSeed });
-    console.log('Puzzle seed sent to client:', client.id, this.puzzleSeed);
   }
 
-  // Puzzle piece drag events
+  @SubscribeMessage('puzzle_init_state')
+  handlePuzzleInitState(
+    @MessageBody() state: any,
+    @ConnectedSocket() client: Socket,
+  ) {
+    // Only set state if it doesn't exist to prevent overwrite
+    if (!this.puzzleState) {
+      console.log('Initializing puzzle state from client', client.id);
+      this.puzzleState = state;
+      // Broadcast to all other clients to sync up
+      client.broadcast.emit('puzzle_state_sync', this.puzzleState);
+    }
+  }
+
   @SubscribeMessage('puzzle_piece_drag_start')
   handlePuzzleDragStart(
     @MessageBody() data: { pieceId: string; x: number; y: number },
     @ConnectedSocket() client: Socket,
   ) {
-    console.log('puzzle_piece_drag_start from', client.id, data);
-    
-    // Broadcast to all other clients with userId
+    // We don't necessarily need to update state on start, but we broadcast
     client.broadcast.emit('puzzle_piece_drag_start', {
       userId: client.id,
       pieceId: data.pieceId,
@@ -118,7 +126,7 @@ export class MouseGateway implements OnGatewayConnection, OnGatewayDisconnect {
     @MessageBody() data: { pieceId: string; x: number; y: number },
     @ConnectedSocket() client: Socket,
   ) {
-    // Broadcast to all other clients with userId (throttled by client)
+    // Throttled updates - just broadcast
     client.broadcast.emit('puzzle_piece_drag_move', {
       userId: client.id,
       pieceId: data.pieceId,
@@ -132,9 +140,17 @@ export class MouseGateway implements OnGatewayConnection, OnGatewayDisconnect {
     @MessageBody() data: { pieceId: string; x: number; y: number },
     @ConnectedSocket() client: Socket,
   ) {
-    console.log('puzzle_piece_drag_end from', client.id, data);
-    
-    // Broadcast to all other clients with userId
+    // Update state
+    if (this.puzzleState && this.puzzleState.pieces) {
+      const piece = this.puzzleState.pieces.find((p) => p.id === data.pieceId);
+      if (piece) {
+        piece.x = data.x;
+        piece.y = data.y;
+        // Assume dropped in board container if dragging
+        piece.container = 'board';
+      }
+    }
+
     client.broadcast.emit('puzzle_piece_drag_end', {
       userId: client.id,
       pieceId: data.pieceId,
@@ -148,13 +164,36 @@ export class MouseGateway implements OnGatewayConnection, OnGatewayDisconnect {
     @MessageBody() data: { pieceId: string },
     @ConnectedSocket() client: Socket,
   ) {
-    console.log('puzzle_piece_snap from', client.id, data);
-    
-    // Broadcast to all other clients with userId
+    if (this.puzzleState && this.puzzleState.pieces) {
+      const piece = this.puzzleState.pieces.find((p) => p.id === data.pieceId);
+      if (piece) {
+        piece.snapped = true;
+        piece.x = piece.correctX; // Snap to correct position
+        piece.y = piece.correctY;
+        piece.container = 'board';
+      }
+
+      // Check completion
+      const allSnapped = this.puzzleState.pieces.every((p) => p.snapped);
+      if (allSnapped) {
+        this.puzzleState.isCompleted = true;
+        this.server.emit('puzzle_completed');
+      }
+    }
+
     client.broadcast.emit('puzzle_piece_snap', {
       userId: client.id,
       pieceId: data.pieceId,
     });
   }
-}
 
+  @SubscribeMessage('puzzle_reset_request')
+  handlePuzzleResetRequest(@ConnectedSocket() client: Socket) {
+    // Only allow reset if game is completed or explicitly requested
+    if (this.puzzleState && this.puzzleState.isCompleted) {
+      console.log('Resetting puzzle state requested by', client.id);
+      this.puzzleState = null;
+      this.server.emit('puzzle_reset');
+    }
+  }
+}
