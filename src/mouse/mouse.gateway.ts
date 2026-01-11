@@ -1,4 +1,12 @@
-import { ConnectedSocket, MessageBody, OnGatewayConnection, OnGatewayDisconnect, SubscribeMessage, WebSocketGateway, WebSocketServer } from '@nestjs/websockets';
+import {
+  ConnectedSocket,
+  MessageBody,
+  OnGatewayConnection,
+  OnGatewayDisconnect,
+  SubscribeMessage,
+  WebSocketGateway,
+  WebSocketServer,
+} from '@nestjs/websockets';
 import { Server, Socket } from 'socket.io';
 import { MouseService } from './mouse.service';
 
@@ -7,10 +15,11 @@ import { MouseService } from './mouse.service';
     origin: '*',
   },
 })
-
 export class MouseGateway implements OnGatewayConnection, OnGatewayDisconnect {
   @WebSocketServer()
-  server:Server;
+  server: Server;
+
+  private puzzleSeed?: number;
 
   constructor(private readonly mouseService: MouseService) {}
 
@@ -32,7 +41,8 @@ export class MouseGateway implements OnGatewayConnection, OnGatewayDisconnect {
   @SubscribeMessage('move_pointer')
   handelPointerMove(
     @ConnectedSocket() client: Socket,
-    @MessageBody() data: {
+    @MessageBody()
+    data: {
       x: number;
       y: number;
       scrollX: number;
@@ -40,7 +50,7 @@ export class MouseGateway implements OnGatewayConnection, OnGatewayDisconnect {
       pageX: number;
       pageY: number;
       current_page: string;
-    }
+    },
   ) {
     const updatedUser = this.mouseService.updateUserPosition(
       client.id,
@@ -50,26 +60,49 @@ export class MouseGateway implements OnGatewayConnection, OnGatewayDisconnect {
       data.scrollY,
       data.pageX,
       data.pageY,
-      data.current_page
-    );
-    if (updatedUser) {
-      client.broadcast.emit('pointer_moved', updatedUser);
-    }
-  } 
-
-  @SubscribeMessage('scroll_update')
-  handleScrollUpdate(
-    @ConnectedSocket() client: Socket,
-    @MessageBody() data: { scrollX: number; scrollY: number }
-  ) {
-    const updatedUser = this.mouseService.updateUserScroll(
-      client.id,
-      data.scrollX,
-      data.scrollY
+      data.current_page,
     );
     if (updatedUser) {
       client.broadcast.emit('pointer_moved', updatedUser);
     }
   }
 
+  @SubscribeMessage('scroll_update')
+  handleScrollUpdate(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() data: { scrollX: number; scrollY: number },
+  ) {
+    const updatedUser = this.mouseService.updateUserScroll(
+      client.id,
+      data.scrollX,
+      data.scrollY,
+    );
+    if (updatedUser) {
+      client.broadcast.emit('pointer_moved', updatedUser);
+    }
+  }
+
+  // In your WebSocket gateway
+  @SubscribeMessage('puzzle_request_seed')
+  handlePuzzleSeedRequest(@ConnectedSocket() client: Socket) {
+    // Use a single seed for all users (or per room)
+    const seed = this.puzzleSeed || Date.now();
+    client.emit('puzzle_seed', { seed });
+  }
+
+  @SubscribeMessage('puzzle_piece_drag_start')
+  handlePuzzleDragStart(
+    @MessageBody() data: { pieceId: string; x: number; y: number },
+    @ConnectedSocket() client: Socket,
+  ) {
+    // Broadcast to all other clients
+    client.broadcast.emit('puzzle_piece_drag_start', {
+      userId: client.id,
+      pieceId: data.pieceId,
+      x: data.x,
+      y: data.y,
+    });
+  }
+
+  // Similar handlers for drag_move, drag_end, and snap events
 }
