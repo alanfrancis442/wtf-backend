@@ -82,20 +82,29 @@ export class MouseGateway implements OnGatewayConnection, OnGatewayDisconnect {
     }
   }
 
-  // In your WebSocket gateway
+  // Puzzle seed management - ensure all users get the same seed
   @SubscribeMessage('puzzle_request_seed')
   handlePuzzleSeedRequest(@ConnectedSocket() client: Socket) {
-    // Use a single seed for all users (or per room)
-    const seed = this.puzzleSeed || Date.now();
-    client.emit('puzzle_seed', { seed });
+    // Initialize seed once, then reuse it for all users
+    if (!this.puzzleSeed) {
+      this.puzzleSeed = Date.now();
+      console.log('Puzzle seed initialized:', this.puzzleSeed);
+    }
+    
+    // Send the same seed to all clients
+    client.emit('puzzle_seed', { seed: this.puzzleSeed });
+    console.log('Puzzle seed sent to client:', client.id, this.puzzleSeed);
   }
 
+  // Puzzle piece drag events
   @SubscribeMessage('puzzle_piece_drag_start')
   handlePuzzleDragStart(
     @MessageBody() data: { pieceId: string; x: number; y: number },
     @ConnectedSocket() client: Socket,
   ) {
-    // Broadcast to all other clients
+    console.log('puzzle_piece_drag_start from', client.id, data);
+    
+    // Broadcast to all other clients with userId
     client.broadcast.emit('puzzle_piece_drag_start', {
       userId: client.id,
       pieceId: data.pieceId,
@@ -104,5 +113,48 @@ export class MouseGateway implements OnGatewayConnection, OnGatewayDisconnect {
     });
   }
 
-  // Similar handlers for drag_move, drag_end, and snap events
+  @SubscribeMessage('puzzle_piece_drag_move')
+  handlePuzzleDragMove(
+    @MessageBody() data: { pieceId: string; x: number; y: number },
+    @ConnectedSocket() client: Socket,
+  ) {
+    // Broadcast to all other clients with userId (throttled by client)
+    client.broadcast.emit('puzzle_piece_drag_move', {
+      userId: client.id,
+      pieceId: data.pieceId,
+      x: data.x,
+      y: data.y,
+    });
+  }
+
+  @SubscribeMessage('puzzle_piece_drag_end')
+  handlePuzzleDragEnd(
+    @MessageBody() data: { pieceId: string; x: number; y: number },
+    @ConnectedSocket() client: Socket,
+  ) {
+    console.log('puzzle_piece_drag_end from', client.id, data);
+    
+    // Broadcast to all other clients with userId
+    client.broadcast.emit('puzzle_piece_drag_end', {
+      userId: client.id,
+      pieceId: data.pieceId,
+      x: data.x,
+      y: data.y,
+    });
+  }
+
+  @SubscribeMessage('puzzle_piece_snap')
+  handlePuzzlePieceSnap(
+    @MessageBody() data: { pieceId: string },
+    @ConnectedSocket() client: Socket,
+  ) {
+    console.log('puzzle_piece_snap from', client.id, data);
+    
+    // Broadcast to all other clients with userId
+    client.broadcast.emit('puzzle_piece_snap', {
+      userId: client.id,
+      pieceId: data.pieceId,
+    });
+  }
 }
+
