@@ -19,8 +19,6 @@ export class MouseGateway implements OnGatewayConnection, OnGatewayDisconnect {
   @WebSocketServer()
   server: Server;
 
-  private puzzleState: any = null;
-
   constructor(private readonly mouseService: MouseService) {}
 
   handleConnection(client: Socket) {
@@ -86,44 +84,69 @@ export class MouseGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
   @SubscribeMessage('puzzle_request_state')
   handlePuzzleRequestState(@ConnectedSocket() client: Socket) {
-    if (this.puzzleState) {
-      client.emit('puzzle_state_sync', this.puzzleState);
+    const puzzleState = this.mouseService.getPuzzleState();
+    if (puzzleState) {
+      client.emit('puzzle_state_sync', puzzleState);
     } else {
       client.emit('puzzle_no_state');
     }
   }
 
-  @SubscribeMessage('puzzle_init_state')
-  handlePuzzleInitState(
-    @MessageBody() state: any,
+  @SubscribeMessage('puzzle_init_request')
+  handlePuzzleInitRequest(
+    @MessageBody()
+    data: {
+      width: number;
+      height: number;
+      imageWidth: number;
+      imageHeight: number;
+      imageX: number;
+      imageY: number;
+      rows: number;
+      cols: number;
+      rotationRange?: number;
+    },
     @ConnectedSocket() client: Socket,
   ) {
-    // Only set state if it doesn't exist to prevent overwrite
-    if (!this.puzzleState) {
-      console.log('Initializing puzzle state from client', client.id);
-      this.puzzleState = state;
-      // Broadcast to all other clients to sync up
-      client.broadcast.emit('puzzle_state_sync', this.puzzleState);
+    // Only initialize if no state exists
+    if (!this.mouseService.getPuzzleState()) {
+      console.log('Initializing puzzle state from client request', client.id);
+      const puzzleState = this.mouseService.generatePuzzleState(
+        data.width,
+        data.height,
+        data.imageWidth,
+        data.imageHeight,
+        data.imageX,
+        data.imageY,
+        data.rows,
+        data.cols,
+        data.rotationRange || 45,
+      );
+      // Broadcast to all clients including the one that requested
+      this.server.emit('puzzle_state_sync', puzzleState);
     }
   }
 
   @SubscribeMessage('puzzle_piece_drag_start')
   handlePuzzleDragStart(
-    @MessageBody() data: { pieceId: string; x: number; y: number },
+    @MessageBody()
+    data: { pieceId: string; x: number; y: number; rotation?: number },
     @ConnectedSocket() client: Socket,
   ) {
-    // We don't necessarily need to update state on start, but we broadcast
+    // Just broadcast, state update happens on drag end
     client.broadcast.emit('puzzle_piece_drag_start', {
       userId: client.id,
       pieceId: data.pieceId,
       x: data.x,
       y: data.y,
+      rotation: data.rotation,
     });
   }
 
   @SubscribeMessage('puzzle_piece_drag_move')
   handlePuzzleDragMove(
-    @MessageBody() data: { pieceId: string; x: number; y: number },
+    @MessageBody()
+    data: { pieceId: string; x: number; y: number; rotation?: number },
     @ConnectedSocket() client: Socket,
   ) {
     // Throttled updates - just broadcast
@@ -132,30 +155,31 @@ export class MouseGateway implements OnGatewayConnection, OnGatewayDisconnect {
       pieceId: data.pieceId,
       x: data.x,
       y: data.y,
+      rotation: data.rotation,
     });
   }
 
   @SubscribeMessage('puzzle_piece_drag_end')
   handlePuzzleDragEnd(
-    @MessageBody() data: { pieceId: string; x: number; y: number },
+    @MessageBody()
+    data: { pieceId: string; x: number; y: number; rotation?: number },
     @ConnectedSocket() client: Socket,
   ) {
-    // Update state
-    if (this.puzzleState && this.puzzleState.pieces) {
-      const piece = this.puzzleState.pieces.find((p) => p.id === data.pieceId);
-      if (piece) {
-        piece.x = data.x;
-        piece.y = data.y;
-        // Assume dropped in board container if dragging
-        piece.container = 'board';
-      }
-    }
+    // Update state in service
+    this.mouseService.updatePiecePosition(
+      data.pieceId,
+      data.x,
+      data.y,
+      'board',
+      data.rotation,
+    );
 
     client.broadcast.emit('puzzle_piece_drag_end', {
       userId: client.id,
       pieceId: data.pieceId,
       x: data.x,
       y: data.y,
+      rotation: data.rotation,
     });
   }
 
@@ -164,19 +188,11 @@ export class MouseGateway implements OnGatewayConnection, OnGatewayDisconnect {
     @MessageBody() data: { pieceId: string },
     @ConnectedSocket() client: Socket,
   ) {
-    if (this.puzzleState && this.puzzleState.pieces) {
-      const piece = this.puzzleState.pieces.find((p) => p.id === data.pieceId);
-      if (piece) {
-        piece.snapped = true;
-        piece.x = piece.correctX; // Snap to correct position
-        piece.y = piece.correctY;
-        piece.container = 'board';
-      }
+    const snapped = this.mouseService.snapPiece(data.pieceId);
 
-      // Check completion
-      const allSnapped = this.puzzleState.pieces.every((p) => p.snapped);
-      if (allSnapped) {
-        this.puzzleState.isCompleted = true;
+    if (snapped) {
+      const puzzleState = this.mouseService.getPuzzleState();
+      if (puzzleState?.isCompleted) {
         this.server.emit('puzzle_completed');
       }
     }
@@ -189,10 +205,11 @@ export class MouseGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
   @SubscribeMessage('puzzle_reset_request')
   handlePuzzleResetRequest(@ConnectedSocket() client: Socket) {
-    // Only allow reset if game is completed or explicitly requested
-    if (this.puzzleState && this.puzzleState.isCompleted) {
+    const puzzleState = this.mouseService.getPuzzleState();
+    // Only allow reset if game is completed
+    if (puzzleState?.isCompleted) {
       console.log('Resetting puzzle state requested by', client.id);
-      this.puzzleState = null;
+      this.mouseService.resetPuzzleState();
       this.server.emit('puzzle_reset');
     }
   }

@@ -1,10 +1,17 @@
 import { Module } from '@nestjs/common';
+import { ConfigModule } from '@nestjs/config';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { MouseModule } from './mouse/mouse.module';
 
 @Module({
-  imports: [MouseModule],
+  imports: [
+    ConfigModule.forRoot({
+      isGlobal: true,
+      envFilePath: ['.env.local', '.env'],
+    }),
+    MouseModule,
+  ],
   controllers: [AppController],
   providers: [AppService],
 })
